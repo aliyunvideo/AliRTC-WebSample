@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>AliWebRTC Demo</title>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+    content="width=device-width, height=device-height, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no" />
+  <link rel="stylesheet" href="./index.css" />
+  <script src="./jquery-1.10.2.min.js"></script>
+  <script src="./aliyun-webrtc-sdk-1.9.0.min.js"></script>
+</head>
+
+<body>
+  <div class='local-display-name'></div>
+  <div class='channel-input'>
+    <input type='text'></input>
+    <button>切换频道</button>
+  </div>
+  <div class='local-video'>
+    <video autoplay playsinline></video>
+  </div>
+  <div class="video-container"></div>
+</body>
+
+</html>
+<script>
+
+  var getQueryString = function (name) {
+    var vars = [], hash;
+    var hashes = window.location.href.slice(window.location.href.indexOf('?') + 1).split('&');
+    for (var i = 0; i < hashes.length; i++) {
+      hash = hashes[i].split('=');
+      vars.push(hash[0]);
+      vars[hash[0]] = hash[1];
+    }
+    return vars[name];
+  }
+  var channelId = getQueryString('channel') || 1900
+  userName = Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 5);
+  $('.local-display-name').text("User: " + userName + "        Channel Id: " + channelId);
+  $('.channel-input input').val(channelId);
+
+  //AliWebRTC code
+  AliRtcEngine.isSupport().then(re => {
+    console.log(re);
+    init();
+  }).catch(err => {
+    alert(err.message);
+  })
+  var aliWebrtc;
+  function init() {
+    aliWebrtc = new AliRtcEngine("");
+    // remote用户加入房间
+    aliWebrtc.on('onJoin', (data) => {
+
+    });
+    // remote流发布事件
+    aliWebrtc.on('onPublisher', (publisher) => {
+      receivePublish(publisher);
+    });
+    // remote流结束发布事件
+    aliWebrtc.on('onUnPublisher', (publisher) => {
+      removePublish(publisher.userId);
+    });
+    // 错误信息
+    aliWebrtc.on('onError', (error) => {
+      var msg = error && error.message ? error.message : error;
+      alert(msg);
+    });
+
+    // 订阅remote流成功后，显示remote流
+    aliWebrtc.on('onMediaStream', (subscriber, stream) => {
+      var video = getDisplayRemoteVideo(subscriber.userId, subscriber.displayName);
+      aliWebrtc.setDisplayRemoteVideo(subscriber, video, stream);
+    });
+
+    aliWebrtc.on('OnConnecting', (data) => {
+      console.log(data.displayName + "正在建立连接中...");
+    });
+    aliWebrtc.on('OnConnected', (data) => {
+      console.log(data.displayName + "成功建立连接");
+    });
+
+    aliWebrtc.on('onLeave', (data) => {
+      removePublish(data.userId);
+    })
+
+
+    //1.预览
+    var localVideo = $('.local-video video');
+    aliWebrtc.startPreview(localVideo[0]).then((obj) => {
+      //2. 获取频道鉴权令牌参数
+      getRTCAuthInfo().then((authInfo) => {
+        //3. 加入房间
+        aliWebrtc.joinChannel(authInfo, userName).then(() => {
+          console.log('加入房间成功');
+          // 4. 发布本地流
+          aliWebrtc.publish().then((res) => {
+            console.log('发布流成功');
+          }, (error) => {
+            alert(error.message);
+          });
+        }).catch((error) => {
+          alert(error.message);
+        })
+      }).catch((error) => {
+        alert(error.message);
+      });
+    }).catch((error) => {
+      alert(error.message);
+    });
+  }
+
+
+  var receivePublish = (publisher) => {
+    //5.订阅remote流
+    aliWebrtc.subscribe(publisher.userId).then((subscribeCallId) => {
+      console.log('订阅成功')
+    }, (error) => {
+      alert(error.message);
+    });
+  };
+
+  var removePublish = (userId) => {
+    var id = userId;
+    var videoWrapper = $('#' + id);
+    videoWrapper ? videoWrapper.remove() : '';
+  }
+
+  var getDisplayRemoteVideo = function (userId, displayName) {
+    var id = userId;
+    var videoWrapper = $('#' + id);
+    if (videoWrapper.length == 0) {
+      videoWrapper = $('<div class="remote-subscriber" id=' + id + '> <video autoplay playsinline></video><div class="display-name"></div></div>');
+      $('.video-container').append(videoWrapper);
+    }
+    videoWrapper.find('.display-name').text(displayName);
+    return videoWrapper.find('video')[0];
+  }
+
+  //获取频道鉴权令牌参数这个方法需要客户重新实现，调用RTC服务的Open API获取
+  var getRTCAuthInfo = () => {
+    return new Promise(function (resolve, reject) {
+      $.ajax({
+        url: "https://alirtc.ossrs.net/app/v1/login?room=" + channelId + "&user=" + userName + "&passwd=1234", //"https://alirtc.ossrs.net/app/v1/login?room="+channelId + "&user="+ userName + "&passwd=1234",
+        type: 'POST',
+        contentType: 'application/json; charset=utf-8',
+        dataType: 'json',
+        success: (data) => {
+          data.data.channel = channelId;
+          resolve(data.data);
+        },
+        failed: (error) => {
+          reject(error);
+        }
+      });
+    });
+  }
+
+  $('.channel-input button').click(() => {
+    var value = $('.channel-input input').val();
+    if (!value) {
+      return;
+    }
+    aliWebrtc.leaveChannel();
+    location.href = './index.html?channel=' + value;
+  });
+
+
+
+  window.onbeforeunload = function (e) {
+    aliWebrtc.leaveChannel();
+    aliWebrtc.dispose();
+  };
+</script>
